@@ -3,8 +3,11 @@
 
 namespace OUTRAGElib\Unserialize\Enum;
 
+use \MyCLabs\Enum\Enum;
+use \Nette\Tokenizer\Token;
 
-class Type extends \MyCLabs\Enum\Enum
+
+class Type extends Enum
 {
 	const TYPE_IMPLIED_REF = 1;
 	const TYPE_STRONG_REF = 2;

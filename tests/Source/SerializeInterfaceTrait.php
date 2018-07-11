@@ -11,7 +11,7 @@ trait SerializeInterfaceTrait
      */
     public function unserialize($input)
     {
-        foreach($input as $key => $value)
+        foreach(unserialize($input) as $key => $value)
             $this->$key = $value;
     }
     

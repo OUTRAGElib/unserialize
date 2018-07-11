@@ -3,8 +3,11 @@
 
 namespace OUTRAGElib\Unserialize\Enum;
 
+use \MyCLabs\Enum\Enum;
+use \Nette\Tokenizer\Token;
 
-class TypePattern extends \MyCLabs\Enum\Enum
+
+class TypePattern extends Enum
 {
 	/**
 	 *	Common filters
@@ -20,10 +23,11 @@ class TypePattern extends \MyCLabs\Enum\Enum
 	/**
 	 *	Special characters
 	 */
-	const C_BRACE_OPEN = "{";
 	const C_BRACE_CLOSE = "}";
+	const C_BRACE_OPEN = "{";
 	const C_COLON = ":";
 	const C_QUOTE = "\"";
+	const C_SEMI_COLON = ";";
 	
 	
 	/**
@@ -62,4 +66,23 @@ class TypePattern extends \MyCLabs\Enum\Enum
 	const TYPE_OBJECT_VALUE = "O:(".self::T_UIV."):".self::C_QUOTE;
 	const TYPE_OBJECT_SERIALIZABLE_VALUE = "C:(".self::T_UIV."):".self::C_QUOTE;
 	const TYPE_INVALID_VALUE = self::T_ANY;
+	
+	
+	/**
+	 *	Get value, based on type in class
+	 */
+	public static function getTypeValue(Token $token)
+	{
+		$type = Type::search($token->type);
+		
+		if($type === false || defined("\\".self::class."::".$type."_VALUE") === false)
+			return false;
+		
+		$matches = [];
+		
+		if(!preg_match("~^".constant("\\".self::class."::".$type."_VALUE")."$~", $token->value, $matches))
+			return false;
+		
+		return $matches[1] ?? null;
+	}
 }

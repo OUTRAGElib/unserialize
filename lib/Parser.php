@@ -9,6 +9,7 @@ use \Nette\Tokenizer\Token;
 use \Nette\Tokenizer\Tokenizer;
 use \OUTRAGElib\Unserialize\Enum\Type as TypeEnum;
 use \OUTRAGElib\Unserialize\Enum\TypePattern as TypePatternEnum;
+use \OUTRAGElib\Unserialize\Adjustment\Serializable as SerializableAdjustment;
 
 
 class Parser
@@ -32,6 +33,12 @@ class Parser
 	 *	Stream
 	 */
 	protected $stream = null;
+	
+	
+	/**
+	 *	Adjustments
+	 */
+	protected $adjustments = [];
 	
 	
 	/**
@@ -63,14 +70,31 @@ class Parser
 	 */
 	public function parse($input)
 	{
-		var_dump($input);
-		
+		# do our stream operations
 		$this->stream = $this->tokenizer->tokenize($input);
 		
 		while($this->stream->nextToken())
 			$this->next();
 		
 		unset($this->stream);
+		
+		# if we have any adjustments, apply these adjustments
+		$output = $input;
+		
+		if(count($this->adjustments) > 0)
+		{
+			foreach($this->adjustments as $adjustment)
+			{
+				$replacement = $adjustment->transform($this->tokenizer, substr($output, $adjustment->offset, $adjustment->length));
+				
+				if($replacement !== false)
+					$output = substr($output, 0, $adjustment->offset).$replacement.substr($output, $adjustment->offset + $adjustment->length);
+			}
+		}
+		
+		unset($this->adjustments);
+		
+		return $output;
 	}
 	
 	
@@ -96,23 +120,45 @@ class Parser
 		}
 		elseif($this->stream->isCurrent(TypeEnum::TYPE_BOOLEAN))
 		{
-			throw new Exception("Not yet defined type: ".TypeEnum::search($datum->type));
+			# simple type, no further action required
 		}
 		elseif($this->stream->isCurrent(TypeEnum::TYPE_INTEGER))
 		{
-			throw new Exception("Not yet defined type: ".TypeEnum::search($datum->type));
+			# simple type, no further action required
+			return true;
 		}
 		elseif($this->stream->isCurrent(TypeEnum::TYPE_DOUBLE_INVALID))
 		{
-			throw new Exception("Not yet defined type: ".TypeEnum::search($datum->type));
+			# simple type, no further action required
+			return true;
 		}
 		elseif($this->stream->isCurrent(TypeEnum::TYPE_DOUBLE))
 		{
-			throw new Exception("Not yet defined type: ".TypeEnum::search($datum->type));
+			# simple type, no further action required
+			return true;
 		}
 		elseif($this->stream->isCurrent(TypeEnum::TYPE_STRING))
 		{
-			throw new Exception("Not yet defined type: ".TypeEnum::search($datum->type));
+			# just progressing forward is needed
+			$length = (int) TypePatternEnum::getTypeValue($datum);
+			
+			$offset = -1;
+			$prev = $datum;
+			
+			while($token = $this->stream->nextToken())
+			{
+				$offset += ($token->offset - $prev->offset);
+				
+				if($offset > $length)
+					break;
+				
+				$prev = $token;
+			}
+			
+			$this->stream->consumeValue(TypePatternEnum::C_QUOTE);
+			$this->stream->consumeValue(TypePatternEnum::C_SEMI_COLON);
+			
+			return true;
 		}
 		elseif($this->stream->isCurrent(TypeEnum::TYPE_SERIALIZED))
 		{
@@ -120,7 +166,9 @@ class Parser
 		}
 		elseif($this->stream->isCurrent(TypeEnum::TYPE_ARRAY))
 		{
-			$count = (int) $this->getValue($this->stream->currentToken());
+			# arrays are literally just a way to start the cycle of life all over again
+			# in an interesting way
+			$count = (int) TypePatternEnum::getTypeValue($datum);
 			
 			# proceed to rattle off key/value pairs
 			for($i = 0; $i < $count; ++$i)
@@ -129,39 +177,32 @@ class Parser
 				$this->stream->nextToken() && $this->next(); # value
 			}
 			
-			$this->assert($this->stream->nextToken(), TypePatternEnum::C_BRACE_CLOSE);
+			$this->stream->consumeValue(TypePatternEnum::C_BRACE_CLOSE);
 			return true;
 		}
 		elseif($this->stream->isCurrent(TypeEnum::TYPE_OBJECT_SERIALIZABLE))
 		{
-			$class = "";
-			$length = (int) $this->getValue($this->stream->currentToken());
+			$class = $this->stream->joinUntil(TypePatternEnum::C_QUOTE);
 			
-			# get class name
-			for($i = 0; $i < $length; ++$i)
-				$class .= $this->stream->nextValue();
+			# progress onwards
+			$this->stream->consumeValue(TypePatternEnum::C_QUOTE);
+			$this->stream->consumeValue(TypePatternEnum::C_COLON);
 			
-			# does class exist?
-			if(!class_exists("\\".$class))
-				throw new Exception("Class '".$class."' does not exist");
+			$length = (int) $this->stream->joinUntil(TypePatternEnum::C_BRACE_OPEN);
 			
-			$this->assert($this->stream->nextToken(), TypePatternEnum::C_QUOTE);
-			$this->assert($this->stream->nextToken(), TypePatternEnum::C_COLON);
+			$this->stream->consumeValue(TypePatternEnum::C_BRACE_OPEN);
 			
-			$length = "";
-			
-			while(($char = $this->stream->nextValue()) != TypePatternEnum::C_COLON)
-				$length .= $char;
-			
-			$this->assert($this->stream->nextToken(), TypePatternEnum::C_BRACE_OPEN);
-			
-			# okay, let's start the entire process all over again
+			# parse contents of object
 			$start = $this->stream->nextToken();
-			$this->next();
-			$finish = $this->stream->currentToken();
 			
-			var_dump($start, $finish);
-			exit;
+			$this->next();
+			
+			$finish = $this->stream->nextToken();
+			
+			# due to past experiences of serialize messing about and reporting the wrong length
+			# for serialized fields this is something that one will definitely check to see
+			if(($finish->offset - $start->offset) !== $length)
+				throw new Exception("Start/finish offsets do not match expected length");
 			
 			return true;
 		}
@@ -171,7 +212,33 @@ class Parser
 		}
 		elseif($this->stream->isCurrent(TypeEnum::TYPE_OBJECT))
 		{
-			throw new Exception("Not yet defined type: ".TypeEnum::search($datum->type));
+			$class = $this->stream->joinUntil(TypePatternEnum::C_QUOTE);
+			
+			# progress onwards
+			$this->stream->consumeValue(TypePatternEnum::C_QUOTE);
+			$this->stream->consumeValue(TypePatternEnum::C_COLON);
+			
+			$count = (int) $this->stream->joinUntil(TypePatternEnum::C_BRACE_OPEN);
+			
+			$this->stream->consumeValue(TypePatternEnum::C_BRACE_OPEN);
+			
+			# proceed to rattle off key/value pairs
+			for($i = 0; $i < $count; ++$i)
+			{
+				$this->stream->nextToken() && $this->next(); # key
+				$this->stream->nextToken() && $this->next(); # value
+			}
+			
+			$this->stream->consumeValue(TypePatternEnum::C_BRACE_CLOSE);
+			
+			# if we have reached this point, then one can presume that we have reached the jackpot
+			# when it comes to unserialisation - we can mock __wakeup functionality on objects
+			# because everything is stored in a format that is very similar to an array - all we
+			# need to do is just log the change and the library will format this later on
+			if(true)
+				array_unshift($this->adjustments, new SerializableAdjustment($datum->offset, $this->stream->currentToken()->offset - $datum->offset + 1));
+			
+			return true;
 		}
 		elseif($this->stream->isCurrent(TypeEnum::TYPE_OBJECT_SERIALIZABLE))
 		{
@@ -181,34 +248,5 @@ class Parser
 		{
 			throw new Exception("Unhandled type: ".TypeEnum::search($datum->type));
 		}
-	}
-	
-	
-	/**
-	 *	Get value
-	 */
-	protected function getValue(Token $token)
-	{
-		$type = TypeEnum::search($token->type);
-		
-		if($type === false || defined("\\".TypePatternEnum::class."::".$type."_VALUE") === false)
-			return false;
-		
-		$matches = [];
-		
-		if(!preg_match("~^".constant("\\".TypePatternEnum::class."::".$type."_VALUE")."$~", $token->value, $matches))
-			return false;
-		
-		return isset($matches[1]) ? $matches[1] : null;
-	}
-	
-	
-	/**
-	 *	Assert something
-	 */
-	public function assert(Token $token, $value)
-	{
-		if($token->value !== $value)
-			throw new Exception("Error: expected '".$value."', got '".$token->value."'");
 	}
 }
