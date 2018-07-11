@@ -1,0 +1,28 @@
+# https://github.com/php/php-src/blob/af341213f73650b28b74b374501d84060eb604ab/ext/standard/var_unserializer.re
+# https://github.com/jqr/php-serialize/blob/master/lib/php_serialize.rb
+
+defined regex's, spaces are ignored:
+
+	uiv = [0-9]+;
+	iv = [+-]? [0-9]+;
+	nv = [+-]? ([0-9]* "." [0-9]+|[0-9]+ "." [0-9]*);
+	nvexp = (iv | nv) [eE] iv;
+	any = [\000-\377];
+	object = [OC];
+
+expected patterns:
+	
+	r	(weak ref)		"r:" uiv ";"
+	R	(strong ref)	"R:" uiv ";"
+	N	(null, \0)		"N;"
+	b	(boolean)		"b:0;"
+	b	(boolean)		"b:1;"
+	i	(integer)		"i:" iv ";"
+	d	(double)		"d:" ("NAN" | "-"? "INF") ";"
+	d	(double)		"d:" (iv | nv | nvexp) ";"
+	s	(string)		"s:" uiv ":" ["]
+	S	(serialised)	"S:" uiv ":" ["]
+	a	(array)			"a:" uiv ":" "{"
+	o	(object, ???)	"o:" uiv ":" ["]					(treat as stdClass)
+	O	(object)		object ":" uiv ":" ["]
+	?	(???)			any									(return 0)
