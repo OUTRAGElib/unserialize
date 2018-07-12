@@ -175,7 +175,7 @@ class Parser
 		}
 		elseif($this->stream->isCurrent(TypeEnum::TYPE_OBJECT_SERIALIZABLE))
 		{
-			$class = $this->stream->joinUntil(TypePatternEnum::C_QUOTE);
+			$class = "\\".$this->stream->joinUntil(TypePatternEnum::C_QUOTE);
 			
 			# progress onwards
 			$this->stream->consumeValue(TypePatternEnum::C_QUOTE);
@@ -202,7 +202,10 @@ class Parser
 			# is an instance of Serializable, then we need to downgrade it...
 			if(true)
 			{
-				if(!is_subclass_of("\\".$class, Serializable::class))
+				if(!class_exists($class))
+					throw new RuntimeException($class." does not exist");
+				
+				if(!is_subclass_of($class, Serializable::class))
 					$this->splicer->queue[] = new MagicWakeupSplice($datum, $this->stream->currentToken());
 			}
 			
@@ -214,7 +217,7 @@ class Parser
 		}
 		elseif($this->stream->isCurrent(TypeEnum::TYPE_OBJECT))
 		{
-			$class = $this->stream->joinUntil(TypePatternEnum::C_QUOTE);
+			$class = "\\".$this->stream->joinUntil(TypePatternEnum::C_QUOTE);
 			
 			# progress onwards
 			$this->stream->consumeValue(TypePatternEnum::C_QUOTE);
@@ -240,7 +243,10 @@ class Parser
 			# need to do is just log the change and the library will format this later on
 			if(true)
 			{
-				if(is_subclass_of("\\".$class, Serializable::class))
+				if(!class_exists($class))
+					throw new RuntimeException($class." does not exist");
+				
+				if(is_subclass_of($class, Serializable::class))
 					$this->splicer->queue[] = new SerializableSplice($datum, $this->stream->currentToken());
 			}
 			
