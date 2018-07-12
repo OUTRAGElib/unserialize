@@ -3,26 +3,19 @@
 
 namespace OUTRAGElib\Unserialize;
 
-use \Exception;
+use \LengthException;
 use \Nette\Tokenizer\Stream;
 use \Nette\Tokenizer\Token;
 use \Nette\Tokenizer\Tokenizer;
 use \OUTRAGElib\Unserialize\Enum\Type as TypeEnum;
 use \OUTRAGElib\Unserialize\Enum\TypePattern as TypePatternEnum;
-use \OUTRAGElib\Unserialize\Adjustment\Serializable as SerializableAdjustment;
+use \OUTRAGElib\Unserialize\Splice\Serializable as SerializableSplice;
+use \RuntimeException;
+use \Serializable;
 
 
 class Parser
 {
-	/**
-	 *	List of modes
-	 */
-	const MODE_FREE = 0;
-	const MODE_ASSOC_START = 1;
-	const MODE_ASSOC_KEY = 2;
-	const MODE_ASSOC_VALUE = 3;
-	
-	
 	/**
 	 *	Tokeniser
 	 */
@@ -36,9 +29,9 @@ class Parser
 	
 	
 	/**
-	 *	Adjustments
+	 *	Splicer
 	 */
-	protected $adjustments = [];
+	protected $splicer = null;
 	
 	
 	/**
@@ -72,27 +65,24 @@ class Parser
 	{
 		# do our stream operations
 		$this->stream = $this->tokenizer->tokenize($input);
+		$this->splicer = new Splicer($this->tokenizer, $this->stream->tokens);
 		
 		while($this->stream->nextToken())
 			$this->next();
 		
+		# at this point we need to do some fancy things with something that I'm going to call
+		# the token splicer. what this wonderful contraption allows us to do is modify the stream
+		# in a certain manner, thus reducing the possibility of object corruption, hopefully!
+		$output = "";
+		$tokens = $this->splicer->splice();
+		
+		foreach($tokens as $token)
+			$output .= $token->value;
+		
 		unset($this->stream);
+		unset($this->splicer);
 		
-		# if we have any adjustments, apply these adjustments
-		$output = $input;
-		
-		if(count($this->adjustments) > 0)
-		{
-			foreach($this->adjustments as $adjustment)
-			{
-				$replacement = $adjustment->transform($this->tokenizer, substr($output, $adjustment->offset, $adjustment->length));
-				
-				if($replacement !== false)
-					$output = substr($output, 0, $adjustment->offset).$replacement.substr($output, $adjustment->offset + $adjustment->length);
-			}
-		}
-		
-		unset($this->adjustments);
+		gc_collect_cycles();
 		
 		return $output;
 	}
@@ -108,15 +98,15 @@ class Parser
 		
 		if($this->stream->isCurrent(TypeEnum::TYPE_IMPLIED_REF))
 		{
-			throw new Exception("Not yet defined type: ".TypeEnum::search($datum->type));
+			# simple type, no further action required
 		}
 		elseif($this->stream->isCurrent(TypeEnum::TYPE_STRONG_REF))
 		{
-			throw new Exception("Not yet defined type: ".TypeEnum::search($datum->type));
+			# simple type, no further action required
 		}
 		elseif($this->stream->isCurrent(TypeEnum::TYPE_NULL))
 		{
-			throw new Exception("Not yet defined type: ".TypeEnum::search($datum->type));
+			# simple type, no further action required
 		}
 		elseif($this->stream->isCurrent(TypeEnum::TYPE_BOOLEAN))
 		{
@@ -162,7 +152,7 @@ class Parser
 		}
 		elseif($this->stream->isCurrent(TypeEnum::TYPE_SERIALIZED))
 		{
-			throw new Exception("Not yet defined type: ".TypeEnum::search($datum->type));
+			throw new RuntimeException("Not yet defined type: ".TypeEnum::search($datum->type));
 		}
 		elseif($this->stream->isCurrent(TypeEnum::TYPE_ARRAY))
 		{
@@ -202,13 +192,13 @@ class Parser
 			# due to past experiences of serialize messing about and reporting the wrong length
 			# for serialized fields this is something that one will definitely check to see
 			if(($finish->offset - $start->offset) !== $length)
-				throw new Exception("Start/finish offsets do not match expected length");
+				throw new LengthException("Start/finish offsets do not match expected length");
 			
 			return true;
 		}
 		elseif($this->stream->isCurrent(TypeEnum::TYPE_ANONYMOUS_OBJECT))
 		{
-			throw new Exception("Not yet defined type: ".TypeEnum::search($datum->type));
+			throw new RuntimeException("Not yet defined type: ".TypeEnum::search($datum->type));
 		}
 		elseif($this->stream->isCurrent(TypeEnum::TYPE_OBJECT))
 		{
@@ -235,18 +225,18 @@ class Parser
 			# when it comes to unserialisation - we can mock __wakeup functionality on objects
 			# because everything is stored in a format that is very similar to an array - all we
 			# need to do is just log the change and the library will format this later on
-			if(true)
-				array_unshift($this->adjustments, new SerializableAdjustment($datum->offset, $this->stream->currentToken()->offset - $datum->offset + 1));
+			if(is_subclass_of("\\".$class, Serializable::class))
+				$this->splicer->queue[] = new SerializableSplice($datum, $this->stream->currentToken());
 			
 			return true;
 		}
 		elseif($this->stream->isCurrent(TypeEnum::TYPE_OBJECT_SERIALIZABLE))
 		{
-			throw new Exception("Not yet defined type: ".TypeEnum::search($datum->type));
+			throw new RuntimeException("Not yet defined type: ".TypeEnum::search($datum->type));
 		}
 		else
 		{
-			throw new Exception("Unhandled type: ".TypeEnum::search($datum->type));
+			throw new RuntimeException("Unhandled type: ".TypeEnum::search($datum->type));
 		}
 	}
 }
