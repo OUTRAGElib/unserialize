@@ -99,18 +99,22 @@ class Parser
 		if($this->stream->isCurrent(TypeEnum::TYPE_IMPLIED_REF))
 		{
 			# simple type, no further action required
+			return true;
 		}
 		elseif($this->stream->isCurrent(TypeEnum::TYPE_STRONG_REF))
 		{
 			# simple type, no further action required
+			return true;
 		}
 		elseif($this->stream->isCurrent(TypeEnum::TYPE_NULL))
 		{
 			# simple type, no further action required
+			return true;
 		}
 		elseif($this->stream->isCurrent(TypeEnum::TYPE_BOOLEAN))
 		{
 			# simple type, no further action required
+			return true;
 		}
 		elseif($this->stream->isCurrent(TypeEnum::TYPE_INTEGER))
 		{
