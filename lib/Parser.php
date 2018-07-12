@@ -10,6 +10,7 @@ use \Nette\Tokenizer\Tokenizer;
 use \OUTRAGElib\Unserialize\Enum\Type as TypeEnum;
 use \OUTRAGElib\Unserialize\Enum\TypePattern as TypePatternEnum;
 use \OUTRAGElib\Unserialize\Splice\Serializable as SerializableSplice;
+use \OUTRAGElib\Unserialize\Splice\MagicWakeup as MagicWakeupSplice;
 use \RuntimeException;
 use \Serializable;
 
@@ -82,11 +83,8 @@ class Parser
 		unset($this->stream);
 		unset($this->splicer);
 		
-		gc_collect_cycles();
-		
 		return $output;
 	}
-	
 	
 	
 	/**
@@ -136,14 +134,15 @@ class Parser
 			# just progressing forward is needed
 			$length = (int) TypePatternEnum::getTypeValue($datum);
 			
-			$offset = -1;
-			$prev = $datum;
+			$offset = 1;
+			$prev = null;
 			
 			while($token = $this->stream->nextToken())
 			{
-				$offset += ($token->offset - $prev->offset);
+				if($prev)
+					$offset += ($token->offset - $prev->offset);
 				
-				if($offset > $length)
+				if($offset >= $length)
 					break;
 				
 				$prev = $token;
@@ -162,13 +161,13 @@ class Parser
 		{
 			# arrays are literally just a way to start the cycle of life all over again
 			# in an interesting way
-			$count = (int) TypePatternEnum::getTypeValue($datum);
+			$count = ((int) TypePatternEnum::getTypeValue($datum)) * 2;
 			
 			# proceed to rattle off key/value pairs
 			for($i = 0; $i < $count; ++$i)
 			{
-				$this->stream->nextToken() && $this->next(); # key
-				$this->stream->nextToken() && $this->next(); # value
+				$this->stream->nextToken();
+				$this->next();
 			}
 			
 			$this->stream->consumeValue(TypePatternEnum::C_BRACE_CLOSE);
@@ -182,8 +181,9 @@ class Parser
 			$this->stream->consumeValue(TypePatternEnum::C_QUOTE);
 			$this->stream->consumeValue(TypePatternEnum::C_COLON);
 			
-			$length = (int) $this->stream->joinUntil(TypePatternEnum::C_BRACE_OPEN);
+			$length = (int) $this->stream->joinUntil(TypePatternEnum::C_COLON);
 			
+			$this->stream->consumeValue(TypePatternEnum::C_COLON);
 			$this->stream->consumeValue(TypePatternEnum::C_BRACE_OPEN);
 			
 			# parse contents of object
@@ -197,6 +197,14 @@ class Parser
 			# for serialized fields this is something that one will definitely check to see
 			if(($finish->offset - $start->offset) !== $length)
 				throw new LengthException("Start/finish offsets do not match expected length");
+			
+			# sometimes things can go backwards too; if we are looking at an object that no longer
+			# is an instance of Serializable, then we need to downgrade it...
+			if(true)
+			{
+				if(!is_subclass_of("\\".$class, Serializable::class))
+					$this->splicer->queue[] = new MagicWakeupSplice($datum, $this->stream->currentToken());
+			}
 			
 			return true;
 		}
@@ -212,15 +220,16 @@ class Parser
 			$this->stream->consumeValue(TypePatternEnum::C_QUOTE);
 			$this->stream->consumeValue(TypePatternEnum::C_COLON);
 			
-			$count = (int) $this->stream->joinUntil(TypePatternEnum::C_BRACE_OPEN);
+			$count = ((int) $this->stream->joinUntil(TypePatternEnum::C_COLON)) * 2;
 			
+			$this->stream->consumeValue(TypePatternEnum::C_COLON);
 			$this->stream->consumeValue(TypePatternEnum::C_BRACE_OPEN);
 			
 			# proceed to rattle off key/value pairs
 			for($i = 0; $i < $count; ++$i)
 			{
-				$this->stream->nextToken() && $this->next(); # key
-				$this->stream->nextToken() && $this->next(); # value
+				$this->stream->nextToken();
+				$this->next();
 			}
 			
 			$this->stream->consumeValue(TypePatternEnum::C_BRACE_CLOSE);
@@ -229,8 +238,11 @@ class Parser
 			# when it comes to unserialisation - we can mock __wakeup functionality on objects
 			# because everything is stored in a format that is very similar to an array - all we
 			# need to do is just log the change and the library will format this later on
-			if(is_subclass_of("\\".$class, Serializable::class))
-				$this->splicer->queue[] = new SerializableSplice($datum, $this->stream->currentToken());
+			if(true)
+			{
+				if(is_subclass_of("\\".$class, Serializable::class))
+					$this->splicer->queue[] = new SerializableSplice($datum, $this->stream->currentToken());
+			}
 			
 			return true;
 		}
