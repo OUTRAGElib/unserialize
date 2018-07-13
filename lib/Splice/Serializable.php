@@ -39,11 +39,13 @@ class Serializable extends SpliceAbstract
 		# something to bear in mind chums is that the first token of the payload has to be
 		# converted from T_ANY to T_ARRAY
 		$payload = array_slice($stream->tokens, $stream->position);
-		
-		$payload[0]->type = TypeEnum::TYPE_ARRAY;
-		$payload[0]->value = sprintf('a:%d:{', $count);
-		
 		$payload_length = 0;
+		
+		$first = clone $payload[0];
+		$first->type = TypeEnum::TYPE_ARRAY;
+		$first->value = sprintf('a:%d:{', $count);
+		
+		$payload[0] = $first;
 		
 		foreach($payload as $p)
 			$payload_length += strlen($p->value);

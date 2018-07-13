@@ -34,15 +34,14 @@ class MagicWakeup extends SpliceAbstract
 		
 		if($stream->isCurrent(TypeEnum::TYPE_ARRAY))
 		{
-			$stack = [ $stream->currentToken() ];
-			$prev = null;
+			$stack = [ clone $stream->currentToken() ];
 			
-			$offset = strlen($stack[0]->value);
+			$prev = null;
+			$offset = 0;
 			
 			while($token = $stream->nextToken())
 			{
-				if($prev)
-					$offset += ($token->offset - $prev->offset);
+				$offset += strlen($token->value);
 				
 				if($offset >= $length)
 					break;

@@ -3,14 +3,16 @@
 
 namespace OUTRAGElib\Unserialize;
 
+use \Exception;
 use \LengthException;
 use \Nette\Tokenizer\Stream;
 use \Nette\Tokenizer\Token;
 use \Nette\Tokenizer\Tokenizer;
 use \OUTRAGElib\Unserialize\Enum\Type as TypeEnum;
 use \OUTRAGElib\Unserialize\Enum\TypePattern as TypePatternEnum;
-use \OUTRAGElib\Unserialize\Splice\Serializable as SerializableSplice;
 use \OUTRAGElib\Unserialize\Splice\MagicWakeup as MagicWakeupSplice;
+use \OUTRAGElib\Unserialize\Splice\Serializable as SerializableSplice;
+use \OUTRAGElib\Unserialize\Splice\SerializableMember as SerializableMemberSplice;
 use \RuntimeException;
 use \Serializable;
 
@@ -33,6 +35,12 @@ class Parser
 	 *	Splicer
 	 */
 	protected $splicer = null;
+	
+	
+	/**
+	 *	Are we actually doing anything?
+	 */
+	protected $strict = true;
 	
 	
 	/**
@@ -88,6 +96,15 @@ class Parser
 	
 	
 	/**
+	 *	Unserialize things
+	 */
+	public function unserialize($input)
+	{
+		return unserialize($this->parse($input));
+	}
+	
+	
+	/**
 	 *	Go onwards
 	 */
 	protected function next()
@@ -134,18 +151,20 @@ class Parser
 			# just progressing forward is needed
 			$length = (int) TypePatternEnum::getTypeValue($datum);
 			
-			$offset = 1;
-			$prev = null;
-			
-			while($token = $this->stream->nextToken())
+			if($length > 0)
 			{
-				if($prev)
-					$offset += ($token->offset - $prev->offset);
+				$prev = null;
+				$offset = 0;
 				
-				if($offset >= $length)
-					break;
-				
-				$prev = $token;
+				while($token = $this->stream->nextToken())
+				{
+					$offset += strlen($token->value);
+					
+					if($offset >= $length)
+						break;
+					
+					$prev = $token;
+				}
 			}
 			
 			$this->stream->consumeValue(TypePatternEnum::C_QUOTE);
@@ -177,6 +196,12 @@ class Parser
 		{
 			$class = "\\".$this->stream->joinUntil(TypePatternEnum::C_QUOTE);
 			
+			if($this->strict)
+			{
+				if(!class_exists($class))
+					throw new RuntimeException($class." does not exist");
+			}
+			
 			# progress onwards
 			$this->stream->consumeValue(TypePatternEnum::C_QUOTE);
 			$this->stream->consumeValue(TypePatternEnum::C_COLON);
@@ -200,11 +225,8 @@ class Parser
 			
 			# sometimes things can go backwards too; if we are looking at an object that no longer
 			# is an instance of Serializable, then we need to downgrade it...
-			if(true)
+			if($this->strict)
 			{
-				if(!class_exists($class))
-					throw new RuntimeException($class." does not exist");
-				
 				if(!is_subclass_of($class, Serializable::class))
 					$this->splicer->queue[] = new MagicWakeupSplice($datum, $this->stream->currentToken());
 			}
@@ -219,11 +241,17 @@ class Parser
 		{
 			$class = "\\".$this->stream->joinUntil(TypePatternEnum::C_QUOTE);
 			
+			if($this->strict)
+			{
+				if(!class_exists($class))
+					throw new RuntimeException($class." does not exist");
+			}
+			
 			# progress onwards
 			$this->stream->consumeValue(TypePatternEnum::C_QUOTE);
 			$this->stream->consumeValue(TypePatternEnum::C_COLON);
 			
-			$count = ((int) $this->stream->joinUntil(TypePatternEnum::C_COLON)) * 2;
+			$count = (int) $this->stream->joinUntil(TypePatternEnum::C_COLON);
 			
 			$this->stream->consumeValue(TypePatternEnum::C_COLON);
 			$this->stream->consumeValue(TypePatternEnum::C_BRACE_OPEN);
@@ -231,6 +259,45 @@ class Parser
 			# proceed to rattle off key/value pairs
 			for($i = 0; $i < $count; ++$i)
 			{
+				# process the key - if we have '\0*\0' as the prefix for a key
+				# we will need to strip this using the splice functionality
+				$this->stream->nextToken();
+				
+				if($this->strict && $this->stream->isCurrent(TypeEnum::TYPE_STRING))
+				{
+					$first = $this->stream->currentToken();
+					$length = (int) TypePatternEnum::getTypeValue($first);
+					
+					$prev = null;
+					$key = "";
+					
+					while($token = $this->stream->nextToken())
+					{
+						$key .= $token->value;
+						
+						if(strlen($key) >= $length)
+							break;
+						
+						$prev = $token;
+					}
+					
+					$this->stream->consumeValue(TypePatternEnum::C_QUOTE);
+					$this->stream->consumeValue(TypePatternEnum::C_SEMI_COLON);
+					
+					# check for naughtiness
+					$stack = [];
+					
+					if(preg_match('/^\0\*\0(.*)$/', $key, $stack))
+						$this->splicer->queue[] = new SerializableMemberSplice($first, $this->stream->currentToken());
+				}
+				else
+				{
+					# uhm, i'm going to presume that this will just be integers and
+					# some floats, would be surprised if any other type enters here
+					$this->next();
+				}
+				
+				# and the value, nothing especially important to worry about here
 				$this->stream->nextToken();
 				$this->next();
 			}
@@ -241,11 +308,8 @@ class Parser
 			# when it comes to unserialisation - we can mock __wakeup functionality on objects
 			# because everything is stored in a format that is very similar to an array - all we
 			# need to do is just log the change and the library will format this later on
-			if(true)
+			if($this->strict)
 			{
-				if(!class_exists($class))
-					throw new RuntimeException($class." does not exist");
-				
 				if(is_subclass_of($class, Serializable::class))
 					$this->splicer->queue[] = new SerializableSplice($datum, $this->stream->currentToken());
 			}
